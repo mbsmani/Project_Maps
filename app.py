@@ -44,7 +44,7 @@ def get_reviews(place_id,count=50):
     "engine": "google_maps_reviews",    # serpapi search engine
     "hl": "en",                         # language of the search
     "place_id": place_id,                # google place id
-    "no_cache":True
+    #"no_cache":True
     }
 
     search = GoogleSearch(params)
@@ -57,6 +57,10 @@ def get_reviews(place_id,count=50):
         
         if not "error" in results:
             for result in results.get("reviews", []): # return an empty list [] if no reviews from the place
+                if('snippet' not in result.keys()):
+                    continue
+                if(len(result.get('snippet')) < 75):
+                    continue
                 reviews.append({
                     "page": page_num,
                     "name": result.get("user").get("name"),
@@ -75,6 +79,9 @@ def get_reviews(place_id,count=50):
         if(len(reviews) >= count):
             break
 
+        if((results is None) or ('serpapi_pagination' not in results.keys())):
+            break
+        
         if results.get("serpapi_pagination").get("next") and results.get("serpapi_pagination").get("next_page_token"):
             # split URL in parts as a dict and update search "params" variable to a new page that will be passed to GoogleSearch()
             search.params_dict.update(dict(parse_qsl(urlsplit(results["serpapi_pagination"]["next"]).query)))
@@ -103,7 +110,12 @@ def get_vector_store():
         return vect_str
     
     # get reviews for the place
-    st.session_state.reviews = get_reviews(place_id=place_id)            
+    st.session_state.reviews = get_reviews(place_id=place_id)
+
+    if(st.session_state.reviews == []):
+        st.warning('I did not find much information about this place while exploring... \n Do you want to try another place?')
+        return None
+                
     chunks = [i['text'] for i in st.session_state.reviews if(i['text'] is not None)]
     vect_str = FAISS.from_texts(texts=chunks,embedding=emb)
     vect_str.save_local(folder_path='Embedded_Docs',index_name=place_id)
@@ -138,13 +150,16 @@ def get_conv_chain(vect_store,temp=0.5):
 
 # process questions and display results
 def handle_question(query):
-    resp = st.session_state.conv({'question':query})
-    st.session_state.chat_hist = resp['chat_history']
-    for i,msg in enumerate(st.session_state.chat_hist):
-        if(i%2 == 0):
-            st.write(user_template.replace('{{MSG}}',msg.content),unsafe_allow_html=True)
-        else:
-            st.write(bot_template.replace('{{MSG}}',msg.content),unsafe_allow_html=True)
+    if(st.session_state.conv is None):
+        st.error("Sorry! I could'nt find much information about this place while exploring...")
+    else:
+        resp = st.session_state.conv({'question':query})
+        st.session_state.chat_hist = resp['chat_history']
+        for i,msg in enumerate(st.session_state.chat_hist):
+            if(i%2 == 0):
+                st.write(user_template.replace('{{MSG}}',msg.content),unsafe_allow_html=True)
+            else:
+                st.write(bot_template.replace('{{MSG}}',msg.content),unsafe_allow_html=True)
 
 # main app page
 def main():
@@ -187,7 +202,8 @@ def main():
                 # vectorize reviews
                 st.session_state.vect_store = get_vector_store()
                 # get converstion
-                st.session_state.conv = get_conv_chain(st.session_state.vect_store)
+                if(st.session_state.vect_store is not None):
+                    st.session_state.conv = get_conv_chain(st.session_state.vect_store)
 
 if __name__ == '__main__':
     main()
